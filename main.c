@@ -52,6 +52,12 @@ char** parse_input(char* CommandLine,int*a){
             mode = 1;
         }
         else if(CommandLine[i]=='"'||CommandLine[i]=='\''){
+            if(mode==1){
+                CommandArray[*a][b]='\0'; //finish the completed word by appending a '\0'
+                b=0;
+                mode = 2;
+                *a=*a+1;
+            }
             if(quote_num>0 && quote[quote_num-1]==CommandLine[i]){
                 quote[quote_num]=NULL;
                 quote_num--;
@@ -117,7 +123,6 @@ void write_to_log_file(const char *sentence,pid_t id){
     fprintf(f,"\n");
     
     fclose(f);
-    // to be implemented
 }
 
 //for handling un-waited for children that terminated but whose places in the processes table are yet to be released
@@ -139,6 +144,7 @@ void reap_zombie_children(){
 
     }
 }
+
 //the handler for SIGCHLD
 void on_child_exit(){
     // a child has terminated and it's "waitable":
@@ -168,15 +174,7 @@ void read_input(char* input){
     input = fgets(input,Max_words*Max_chars,stdin);
     return;
 }
-//to import the value of a variable in the assignment table
-void* import(char*var){
-    for (int i = 0; i <assingments_count ; i+=2){
-        if(!strcmp(var,assignments[i])){
-            return assignments[i+1];
-        }
-    }
-    return NULL;
-}
+
 //to determine whether the command is built-in or external
 enum inputType get_input_type(char* command){
     if(!strcmp(command,"echo")||!strcmp(command,"export")||!strcmp(command,"cd")||!strcmp(command,"exit")){
@@ -199,6 +197,15 @@ enum commandType determine_built_in_command(char* command){
         return end;
     }
     return undefined;
+}
+//to import the value of a variable in the assignment table
+void* import(char*var){
+    for (int i = 0; i <assingments_count ; i+=2){
+        if(!strcmp(var,assignments[i])){
+            return assignments[i+1];
+        }
+    }
+    return NULL;
 }
 //replaces each ($variable) with the corresponding (value) 
 //[takes apointer *exp to the original string and another pointer to store in the new resulting string]
@@ -297,6 +304,12 @@ void changeDirectory(char** arguments_string){
         }
     }
 }
+//to print the assignment table --> for when export got no arguments & also for testing purposes
+void printAssingments(){
+    for (int i = 0; i <assingments_count ; i+=2){
+        printf("%s : %s\n",assignments[i],assignments[i+1]);            
+    }
+}
 //to store a pair of variable and value into the table:
 void assign(char* var,char* value){
     for (int i = 0; i <assingments_count ; i+=2){
@@ -313,12 +326,7 @@ void assign(char* var,char* value){
     assignments[assingments_count-1]=value;
 
 }
-//to print the assignment table --> for when export got no arguments & also for testing purposes
-void printAssingments(){
-    for (int i = 0; i <assingments_count ; i+=2){
-        printf("%s : %s\n",assignments[i],assignments[i+1]);            
-    }
-}
+
 //takes an argument of export and processes it (ex : "x=sad"), returns -1 if something was wrong
 int ExportArg(char* export_argument){
     char* variable = malloc(Max_chars*sizeof(char));
@@ -372,11 +380,14 @@ int execute_shell_builtin(char** CommandArray){
             changeDirectory(CommandArray);
             break;
         case echo:
-            for(int c=0;c<strlen(CommandArray[1]);c++){
-                if(CommandArray[1][c] != '"'){
-                    printf("%c",CommandArray[1][c]);
+            if(CommandArray[1]){
+                for(int c=0;c<strlen(CommandArray[1]);c++){
+                    if(CommandArray[1][c] != '"'){
+                        printf("%c",CommandArray[1][c]);
+                    }
                 }
             }
+            
             printf("\n");
             break;
         case export:
@@ -397,7 +408,7 @@ int execute_command(char** command){
         child = id;
         execvp(command[0],command);
         printf("Error processing the command, make sure the command %s is correct\n",command[0]);
-        return(-1);
+        return(0);
     }
     //parent process:
         //foreground:
@@ -425,6 +436,8 @@ void shell(){
     do{
         printf("..%s$ ",CurrentWorkingDirectory);
         read_input(Input);
+        printf("%s\n",Input);
+        printf("%p\n",Input);
         a=0;
         char* evaluatedInput = (char*) malloc(10*strlen(Input)*sizeof(char));
         evaluate_expression(Input,evaluatedInput);
@@ -469,9 +482,6 @@ int main(){
     fflush(stdout);
     fflush(stdin);
     //register SIGCHLD handler (on_child_exit):
-        // struct sigaction SA;
-        // SA.sa_handler=&on_child_exit;
-        // sigaction(SIGCHLD,&SA,NULL);
         signal(SIGCHLD,on_child_exit);
     //setup environment and start taking commands;
         setup_environment();
