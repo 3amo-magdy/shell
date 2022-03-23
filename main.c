@@ -1,11 +1,12 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include<string.h>
-#include<unistd.h>
-#include<signal.h>
+#include <string.h>
+#include <unistd.h>
+#include <signal.h>
 #include <sys/wait.h>
 #include <sys/resource.h>
 #include <time.h>
+#include <errno.h>
 //global enums
 enum inputType{shell_builtin,executable_or_error}; 
 enum commandType{cd, echo, export, undefined, end};
@@ -21,7 +22,7 @@ char* CurrentWorkingDirectory;   //Path of the current directory
 char** assignments;     //assignments table for exporting variables
 int assingments_count;  //current number of assignments
 int background;   //background process or not ? 1 or 0
-// pid_t child;
+pid_t child;    //pid_t for fork
 
 
 
@@ -34,7 +35,9 @@ char** parse_input(char* CommandLine,int*a){
     background=0; //setting background to another value later if found "&" as the last argument
     int mode = 0; //there are two modes : 0 for storing characters sequentially,
                                        // 1 for skipping characters sequentially
-   
+    
+    char quote[16];
+    int quote_num=0;
     char** CommandArray = (char**)malloc(Max_words*sizeof(char*));   //(allocate memory) for the returned 2d structure
     for (int i = 0; i < Max_words; i++)
     {
@@ -42,8 +45,21 @@ char** parse_input(char* CommandLine,int*a){
     }
 
     for(int i=0;i<strlen(CommandLine)&&CommandLine[i]!='\n';i++){
-        if((CommandLine[i]==' ')&&mode==0){  //switch to the skipping mode (1)
+        if(quote_num==0&&mode==2){
+            mode = 0;
+        }
+        else if((CommandLine[i]==' ')&&mode==0){  //switch to the skipping mode (1)
             mode = 1;
+        }
+        else if(CommandLine[i]=='"'||CommandLine[i]=='\''){
+            if(quote_num>0 && quote[quote_num-1]==CommandLine[i]){
+                quote[quote_num]=NULL;
+                quote_num--;
+            }
+            else{
+                quote[quote_num++]=CommandLine[i];
+                mode = 2;
+            }
         }
         else if((CommandLine[i]!=' ')&&mode==1){   //switch to the storing mode (0)
             CommandArray[*a][b]='\0'; //finish the completed word by appending a '\0'
@@ -52,19 +68,24 @@ char** parse_input(char* CommandLine,int*a){
             *a=*a+1;
 
             if((!strcmp(CommandArray[0],"cd"))||
-                (!strcmp(CommandArray[0],"echo")&&(CommandLine[i]=='"'||CommandLine[i]=='\''))){
+                (!strcmp(CommandArray[0],"echo"))){
                CommandArray[*a]=(CommandLine+i);
                return CommandArray;
             }
         }
-        if(mode==0){ //sequential 0 mode to store characters
+        if(mode == 2||mode ==0){
             CommandArray[*a][b]=CommandLine[i];
             b++;
             CommandArray[*a]=realloc(CommandArray[*a],(b+1)*sizeof(char));
+            
         }
         else{ 
             //skip space characters
         }
+    }
+    if(quote_num!=0){
+        *a = -1;
+        return CommandArray;
     }
     CommandArray[*a][b]='\0'; //finish the last argument string (word)
    
@@ -85,27 +106,37 @@ char** parse_input(char* CommandLine,int*a){
 
 
 //write a sentence onto the log.txt file 
-void write_to_log_file(const char *sentence){
+void write_to_log_file(const char *sentence,pid_t id){
     time_t t = time(NULL);
     struct tm tm =*localtime(&t);
-
     FILE* f = fopen("log.txt","a");
-    fprintf(f,"%d-%02d-%02d %02d:%02d:%02d -> %s\n",(tm.tm_year+1900),tm.tm_mon+1,tm.tm_mday,tm.tm_hour,tm.tm_min,tm.tm_sec,sentence);
+    fprintf(f,"%d-%02d-%02d %02d:%02d:%02d -> %s ",(tm.tm_year+1900),tm.tm_mon+1,tm.tm_mday,tm.tm_hour,tm.tm_min,tm.tm_sec,sentence);
+    if(id){
+        fprintf(f," %d",id);
+    }
+    fprintf(f,"\n");
+    
     fclose(f);
     // to be implemented
 }
 
 //for handling un-waited for children that terminated but whose places in the processes table are yet to be released
 void reap_zombie_children(){
-    pid_t res = waitpid(-1,NULL,WNOHANG);
-    if(res==0){
-        write_to_log_file("Child couldn't be terminated !\n");
-    }
-    else if(res == -1){
-        printf("\n");
-    }
-    else{
-        write_to_log_file("Child terminated\n");
+    pid_t res;
+    while(res = waitpid(-1,NULL,WNOHANG)){
+        if(res!=-1){
+            write_to_log_file("Background Child terminated :",res);
+        }
+        else{
+            if(errno!=10){
+                write_to_log_file(strerror(errno),NULL);
+            }
+            else{
+                write_to_log_file("Foreground Child terminated",NULL);
+            }
+            break;
+        }
+
     }
 }
 //the handler for SIGCHLD
@@ -129,7 +160,7 @@ void setup_environment(){
     assingments_count=0;
 
     background=0;
-    write_to_log_file("New session started !");
+    write_to_log_file("New session started !",NULL);
 }
 //to read the next command line
 void read_input(char* input){
@@ -398,16 +429,20 @@ void shell(){
         char* evaluatedInput = (char*) malloc(10*strlen(Input)*sizeof(char));
         evaluate_expression(Input,evaluatedInput);
         CommandArray = parse_input(evaluatedInput,&a);
-        input_type = get_input_type(CommandArray[0]);
-        switch(input_type){
-            case shell_builtin:
-                status = execute_shell_builtin(CommandArray);
-                break;
-            case executable_or_error:
-                status = execute_command(CommandArray);
-                break;
+        if(a==-1){
+            printf("Parsing Error\n");
         }
-
+        else{
+            input_type = get_input_type(CommandArray[0]);
+            switch(input_type){
+                case shell_builtin:
+                    status = execute_shell_builtin(CommandArray);
+                    break;
+                case executable_or_error:
+                    status = execute_command(CommandArray);
+                    break;
+            }
+        }
         // for (int i = 0; i < ArgumentsNumber; i++)
         // {
         //     free(CommandArray[i]);
@@ -434,11 +469,12 @@ int main(){
     fflush(stdout);
     fflush(stdin);
     //register SIGCHLD handler (on_child_exit):
-    struct sigaction SA;
-    SA.sa_handler=&on_child_exit;
-    sigaction(SIGCHLD,&SA,NULL);
+        // struct sigaction SA;
+        // SA.sa_handler=&on_child_exit;
+        // sigaction(SIGCHLD,&SA,NULL);
+        signal(SIGCHLD,on_child_exit);
     //setup environment and start taking commands;
-    setup_environment();
+        setup_environment();
     shell();
     return 0;
 }
