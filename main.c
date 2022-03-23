@@ -394,6 +394,7 @@ int execute_shell_builtin(char** CommandArray){
             Export(CommandArray,ArgumentsNumber);
             break;
         case undefined:
+            printf("Un expected behaviour\n");
             return -1;
         case end:
             return -2;
@@ -408,7 +409,7 @@ int execute_command(char** command){
         child = id;
         execvp(command[0],command);
         printf("Error processing the command, make sure the command %s is correct\n",command[0]);
-        return(0);
+        exit(0);
     }
     //parent process:
         //foreground:
