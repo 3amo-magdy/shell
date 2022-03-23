@@ -6,40 +6,47 @@
 #include <sys/wait.h>
 #include <sys/resource.h>
 #include <time.h>
-
-const int Max_words = 16;
-const int Max_chars = 12;
-const int Max_assignments = 32;
-int ArgumentsNumber;
-char* PreviousDirectory;
-enum inputType{shell_builtin,executable_or_error};
+//global enums
+enum inputType{shell_builtin,executable_or_error}; 
 enum commandType{cd, echo, export, undefined, end};
 
-pid_t child;
-char* CurrentWorkingDirectory;
-char** assignments;
-int assingments_count;
-int background;
-char** parse_input(char* CommandLine,int*a){
-    *a = 0;
-    background=0;
-    int b=0;
-    int n=0;
+//for (malloc):
+const int Max_words = 16;  //max words per line
+const int Max_chars = 12;  //max characters per word
+const int Max_assignments = 32;  //max number of assignments 
 
-    int mode = 0;
-    int quotes=0;
-    char** CommandArray = (char**)malloc(Max_words*sizeof(char*));
+int ArgumentsNumber;    //number of space-seperated elements in the command inputted
+char* PreviousDirectory;   //path of the previous directory
+char* CurrentWorkingDirectory;   //Path of the current directory
+char** assignments;     //assignments table for exporting variables
+int assingments_count;  //current number of assignments
+int background;   //background process or not ? 1 or 0
+// pid_t child;
+
+
+
+//takes a string, outputs a pointer to the array of strings seperated by spaces of the original string
+//takes int *a to store the number of words found in it
+char** parse_input(char* CommandLine,int*a){
+    *a = 0;    //index of a word - first dimension
+    int b=0;   //index of a character - second dmension
+
+    background=0; //setting background to another value later if found "&" as the last argument
+    int mode = 0; //there are two modes : 0 for storing characters sequentially,
+                                       // 1 for skipping characters sequentially
+   
+    char** CommandArray = (char**)malloc(Max_words*sizeof(char*));   //(allocate memory) for the returned 2d structure
     for (int i = 0; i < Max_words; i++)
     {
         CommandArray[i] = (char*) malloc(Max_chars*sizeof(char));
     }
 
     for(int i=0;i<strlen(CommandLine)&&CommandLine[i]!='\n';i++){
-        if((CommandLine[i]==' ')&&mode==0){
+        if((CommandLine[i]==' ')&&mode==0){  //switch to the skipping mode (1)
             mode = 1;
         }
-        else if((CommandLine[i]!=' ')&&mode==1){
-            CommandArray[*a][b]='\0';
+        else if((CommandLine[i]!=' ')&&mode==1){   //switch to the storing mode (0)
+            CommandArray[*a][b]='\0'; //finish the completed word by appending a '\0'
             b=0;
             mode = 0;
             *a=*a+1;
@@ -50,21 +57,22 @@ char** parse_input(char* CommandLine,int*a){
                return CommandArray;
             }
         }
-        if(mode==0){
+        if(mode==0){ //sequential 0 mode to store characters
             CommandArray[*a][b]=CommandLine[i];
-            n++;
             b++;
             CommandArray[*a]=realloc(CommandArray[*a],(b+1)*sizeof(char));
         }
-        else{
+        else{ 
             //skip space characters
         }
     }
-    CommandArray[*a][b]='\0';
-    if(!strcmp(CommandArray[*a],"&")){
-        background=1;
+    CommandArray[*a][b]='\0'; //finish the last argument string (word)
+   
+    if(!strcmp(CommandArray[*a],"&")){ //if "&" was the last argument --> background 
+        background=1;   //don't increment *a to overwrite the "&" with NULL
     }
-    else{
+    else{   
+       // increment *a to keep the last argument 
         *a=*a+1;
         background=0;
     }
@@ -75,21 +83,8 @@ char** parse_input(char* CommandLine,int*a){
 }
 
 
-// main ()
-// {
-// 		signal (SIGCHLD, proc_exit);
-// 		switch (fork()) {
-// 			case -1:
-// 				perror ("main: fork");
-// 				exit (0);
-// 			case 0:
-// 				printf ("I'm alive (temporarily)\n");
-// 				exit (rand());
-// 			default:
-// 				pause();
-// 		}
-// }
 
+//write a sentence onto the log.txt file 
 void write_to_log_file(const char *sentence){
     time_t t = time(NULL);
     struct tm tm =*localtime(&t);
@@ -100,6 +95,7 @@ void write_to_log_file(const char *sentence){
     // to be implemented
 }
 
+//for handling un-waited for children that terminated but whose places in the processes table are yet to be released
 void reap_zombie_children(){
     pid_t res = waitpid(-1,NULL,WNOHANG);
     if(res==0){
@@ -111,36 +107,37 @@ void reap_zombie_children(){
     else{
         write_to_log_file("Child terminated\n");
     }
-    
-
 }
+//the handler for SIGCHLD
 void on_child_exit(){
     // a child has terminated and it's "waitable":
     reap_zombie_children();
 }
 
-
-
 void setup_environment(){
+    //the two Directories initialization
     CurrentWorkingDirectory = (char*) malloc(Max_words*Max_chars*sizeof(char));
     PreviousDirectory = (char*) malloc(Max_words*sizeof(char));
     PreviousDirectory[0]='!';
-    assingments_count=0;
     CurrentWorkingDirectory=  getcwd(CurrentWorkingDirectory,Max_words*Max_chars*sizeof(char));
-    chdir(CurrentWorkingDirectory);
+    //chdir(CurrentWorkingDirectory);
+   
     assignments=(char**)malloc(2*Max_assignments*sizeof(char*));
     for(int n=0;n<2*Max_assignments;n++){
         assignments[n]=(char*)malloc(Max_chars);
     }
+    assingments_count=0;
+
     background=0;
     write_to_log_file("New session started !");
 }
+//to read the next command line
 void read_input(char* input){
     fflush(stdin);
     input = fgets(input,Max_words*Max_chars,stdin);
     return;
 }
-
+//to import the value of a variable in the assignment table
 void* import(char*var){
     for (int i = 0; i <assingments_count ; i+=2){
         if(!strcmp(var,assignments[i])){
@@ -149,12 +146,14 @@ void* import(char*var){
     }
     return NULL;
 }
+//to determine whether the command is built-in or external
 enum inputType get_input_type(char* command){
     if(!strcmp(command,"echo")||!strcmp(command,"export")||!strcmp(command,"cd")||!strcmp(command,"exit")){
         return shell_builtin;
     }
     return executable_or_error;
 }
+//in case it was built-in, then which one is it ?:
 enum commandType determine_built_in_command(char* command){
     if(!strcmp(command,"echo")){
         return echo;
@@ -170,38 +169,35 @@ enum commandType determine_built_in_command(char* command){
     }
     return undefined;
 }
-int command_is_not_exit(char* command){
-    if(!strcmp(command,"exit")){
-        return 0;
-    }
-    return 1;
-}
-
+//replaces each ($variable) with the corresponding (value) 
+//[takes apointer *exp to the original string and another pointer to store in the new resulting string]
 void evaluate_expression(char* exp,char* newExpression){
     char* value;
     int var_counter=0;
     int newSize=0;
     for (int i = 0; i < strlen(exp)&&exp[i]!='\n'; i++)
     {
-
         if(exp[i]=='$'){
             i++;
             while((i+var_counter)<strlen(exp)&&((exp[i+var_counter]>64&&exp[i+var_counter]<91)||(exp[i+var_counter]>96&&exp[i+var_counter]<123)||(exp[i+var_counter]>47&&exp[i+var_counter]<58))){
                 var_counter++;
             }
-            // char* var =malloc(var_counter*sizeof(char));
+            // char* var =malloc(var_counter*sizeof(char)); --->found to be not necessary cuz it's just a local temporary variable
             char var [var_counter+1];
+            //gather the variable into var : char*
             for(int j=0;j<var_counter;j++){
                 var[j] = exp[i+j];
             }
             var[var_counter]='\0';
-
+            
             if(var_counter){
                 i+=var_counter-1;
             }
 
             var_counter=0;
+            //import the corresponding value from the table:
             value = import(var);
+            //if not found, replace it with empty string (a.k.a remove it)
             if(value == NULL){
                 value = "";
             }
@@ -221,48 +217,56 @@ void evaluate_expression(char* exp,char* newExpression){
     newExpression = (char*)realloc(newExpression,sizeof(char)*(newSize));
     return ;
 }
-
+//for cd command
 void changeDirectory(char** arguments_string){
+   //if [cd]: go to HOME
     if(!arguments_string[1]){
         PreviousDirectory = CurrentWorkingDirectory;
         CurrentWorkingDirectory = getenv("HOME");
         chdir(CurrentWorkingDirectory);
         return;
     }
-    
     int n=0;
     char** arguments = parse_input(arguments_string[1],&n);
+    //if there was 1 argument:
     if(n==1){
+        //for [cd -]
         if(strcmp(arguments[0],"-")==0){
             if(PreviousDirectory[0]=='!'){
-                //do nothing
+                //do nothing as no previous directory was set yet
             }
             else{
+                //go to the previous directory and swap current with previous
                 chdir(PreviousDirectory);
-
                 char* temp = (PreviousDirectory);
                 PreviousDirectory = CurrentWorkingDirectory;
                 CurrentWorkingDirectory = temp;
 
             }
         }
+        //for[cd ~] go to HOME
         else if(strcmp(arguments[0],"~")==0){
             strcpy(PreviousDirectory,CurrentWorkingDirectory);
             strcpy(CurrentWorkingDirectory , getenv("HOME"));
-            chdir(CurrentWorkingDirectory);        }
+            chdir(CurrentWorkingDirectory);        
+        }
+        // for [cd ..]
         else if(strcmp(arguments[0],"..")==0||strcmp(arguments[0],"../")==0){
             strcpy(PreviousDirectory,CurrentWorkingDirectory);
             chdir("..");
             CurrentWorkingDirectory= getcwd(CurrentWorkingDirectory,sizeof(CurrentWorkingDirectory));
         }
+        // for [cd <path>]
         else {
             strcpy(PreviousDirectory,CurrentWorkingDirectory);
-            chdir(arguments[0]);
+            if(!chdir(arguments[0])){
+               perror("Error");
+            };
             CurrentWorkingDirectory= getcwd(CurrentWorkingDirectory,sizeof(CurrentWorkingDirectory));
         }
     }
 }
-
+//to store a pair of variable and value into the table:
 void assign(char* var,char* value){
     for (int i = 0; i <assingments_count ; i+=2){
         if(!strcmp(var,assignments[i])){
@@ -272,19 +276,19 @@ void assign(char* var,char* value){
         }
     }
     assingments_count+=2;
-
     assignments=realloc(assignments,(assingments_count)*sizeof(char*));
-
 
     assignments[assingments_count-2]=var;
     assignments[assingments_count-1]=value;
 
 }
+//to print the assignment table --> for when export got no arguments & also for testing purposes
 void printAssingments(){
     for (int i = 0; i <assingments_count ; i+=2){
         printf("%s : %s\n",assignments[i],assignments[i+1]);            
     }
 }
+//takes an argument of export and processes it (ex : "x=sad"), returns -1 if something was wrong
 int ExportArg(char* export_argument){
     char* variable = malloc(Max_chars*sizeof(char));
     char* value = malloc(Max_chars*sizeof(char));
@@ -315,6 +319,7 @@ int ExportArg(char* export_argument){
     value[val_c]='\0';
     assign(variable,value);
 }
+//takes the whole export command (ex: 'export x=sad y=423 z="yes"')
 void Export(char** CommandArray,int count){
     if(count < 2){
         printAssingments();
@@ -326,8 +331,8 @@ void Export(char** CommandArray,int count){
             printf("%s is not a valid export identifier\n",CommandArray[i]);
         }
     }
-
 }
+//if the command was built-in:
 int execute_shell_builtin(char** CommandArray){
     char* command = CommandArray[0];
     enum commandType command_type = determine_built_in_command(command);
@@ -353,17 +358,12 @@ int execute_shell_builtin(char** CommandArray){
     }
     return 0;
 }
-
+//if it was an external command:
 int execute_command(char** command){
     pid_t id = fork();
     //child process:
     if(id==0&&id!=-1){
         child = id;
-        // printf("\n command :\n");
-        // for(int i = 0; i < assingments_count; i++){
-        //     printf("%s\n",command[i]);
-        // }
-        // printf("--------\n");
         execvp(command[0],command);
         printf("Error processing the command, make sure the command %s is correct\n",command[0]);
         return(-1);
@@ -372,18 +372,19 @@ int execute_command(char** command){
         //foreground:
     else if (id!=0&&!background){
         //wait on the child
-        //we can use first parameter as -1 cuz we only have one child at a time
+        //we can use first parameter as -1 cuz we only would have one foreground child at a time
         waitpid(-1,NULL,0);
     }
         //background:
     else if(id ==0&&background){
-        //don't wait on the child .. do nothing
+        //don't wait on the child .. keep going in ur flow
     }
     else if(id==-1){
-        printf("id = -1");
+        printf("Error Occured");
     }
 }
-
+//contains the loop of the shell 
+//makes use of the above methods to parse, evaluate and execute commands
 void shell(){
     char* Input = malloc(Max_chars*Max_words*sizeof(char));
     char** CommandArray;
@@ -428,14 +429,15 @@ void shell(){
 }
 
 
-
+//the main function:
 int main(){
     fflush(stdout);
     fflush(stdin);
+    //register SIGCHLD handler (on_child_exit):
     struct sigaction SA;
     SA.sa_handler=&on_child_exit;
     sigaction(SIGCHLD,&SA,NULL);
-
+    //setup environment and start taking commands;
     setup_environment();
     shell();
     return 0;
